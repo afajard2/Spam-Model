@@ -1,0 +1,565 @@
+---
+editor_options:
+  markdown:
+    wrap: 72
+output: pdf_document
+---
+
+Importing the dataset with some useful libraries to make models and
+plots
+
+```{r}
+rm(list=ls())
+library(rpart) 
+library(ggplot2)
+library(caret)
+
+# emails.df <- read.csv("G:/My Drive/Junior (spring)/predictive analytics/tfidf_df.csv") 
+emails.df <- read.csv("tfidf_df.csv") 
+# head(emails.df) 
+# Display the first few rows of the dataset to understand its structure
+
+emails.df$label <- as.factor(emails.df$label)
+```
+
+# Set seed for reproducibility
+
+```{r}
+set.seed(123)
+```
+
+```{r}
+
+```
+
+# Split the data into training (70%) and test (30%) sets
+
+```{r}
+trainIndex <- createDataPartition(emails.df$label, p = 0.7, list = FALSE) 
+train_set <- emails.df[trainIndex, ] 
+valid_set <- emails.df[-trainIndex, ]
+```
+
+# Classification Tree
+
+creates the style for the data and information so the tree can later be
+plotted
+
+```{r}
+# Define a custom function to apply consistent styling for plots.
+plot_common_styling <- function(g) {
+  g <- g +
+    geom_point(size=2) +  # Adds points to the plot with a specified size.
+    scale_color_manual(values=c("darkorange", "steelblue")) +  # Set custom colors for points.
+    scale_fill_manual(values=c("darkorange", "lightblue")) +   # Set custom fill colors.
+    labs(x=" ", y=" ") +        # Define axis labels for the plot.
+    theme_bw() +  # Use a theme with a white background and gridlines.
+    theme(legend.position=c(0.89, 0.91),   # Set the legend position.
+          legend.title=element_blank(),    # Remove legend title.
+          legend.key=element_blank(),      # Remove legend key box.
+          legend.background=element_blank())  # Remove legend background.
+  return(g)  # Return the updated plot.
+}
+
+# Create an initial plot using ggplot 
+g <- ggplot(emails.df, mapping=aes(x=label, y=spam))
+```
+
+```{r}
+library(rpart)
+library(rpart.plot)
+library(ggplot2)
+```
+
+print the table ecpressing the tree's properties
+
+```{r}
+class.tree <- rpart(label ~ ., data = train_set,
+                    control = rpart.control(minsplit = 10),
+                    method = "class")
+rpart.rules(class.tree)
+```
+
+```{r}
+class.tree <- rpart(label ~ ., data = valid_set,
+                    control = rpart.control(minsplit = 0), # basic split
+                    method = "class")
+rpart.rules(class.tree)
+```
+
+Building out the original tree
+
+```{r}
+rpart.plot(class.tree,
+           cex = .7,         # Increase overall text size
+           extra = 100,       # Show probabilities + percentages
+           fallen.leaves = FALSE)  
+```
+
+Create a pruned tree for less splits and greater amount of requirements
+for splitting
+
+```{r}
+class.tree <- rpart(label ~ ., data = valid_set,
+                    control = rpart.control(minsplit = 1000), #much larger split
+                    method = "class")
+rpart.rules(class.tree)
+
+rpart.plot(class.tree,
+           cex = .7,         # Increase overall text size
+           extra = 100,       # Show probabilities + percentages
+           fallen.leaves = FALSE)  
+```
+
+```{r}
+predictions <- predict(class.tree, valid_set, type = "class")
+```
+
+Print a confusion matrix to understand accuracy, sensitivity, and
+specificity
+
+```{r}
+confusion_matrix <- table(Predicted = predictions, Actual = valid_set$label)
+
+print(confusion_matrix)
+
+# Calculate accuracy
+accuracy <- sum(predictions == valid_set$label) / nrow(valid_set)
+print(paste("Accuracy:", round(accuracy * 100, 2), "%"))
+```
+
+# Logistic Regression
+
+produce the confusion matrix and scores for a logistic regression model
+
+```{r}
+lm.fit <- glm(label ~ ., data = train_set, family = binomial)
+
+# Get predicted probabilities
+predictions <- predict(lm.fit, newdata = valid_set, type = "response")
+
+# Assign predicted classes based on the original factor levels
+predicted_labels <- ifelse(predictions > 0.5,
+                           levels(valid_set$label)[2],  # usually "1" or "spam"
+                           levels(valid_set$label)[1])  # usually "0" or "not spam")
+
+# Convert to factor with the same levels as valid_set$label
+predicted_labels <- factor(predicted_labels, levels = levels(valid_set$label))
+
+# Compute confusion matrix
+cm <- confusionMatrix(predicted_labels, valid_set$label)
+
+# Print the confusion matrix
+print(cm)
+```
+
+Name the coefficients with the highest and lowest scores regarding spam
+likelihood
+
+```{r}
+coefs <- coef(lm.fit)
+sorted_coefs <- sort(coefs)
+
+top_negative <- head(sorted_coefs, 50)
+top_negative
+top_positive <- tail(sorted_coefs, 50)
+top_positive
+```
+
+**Coeffficient Plot**
+
+Generate a bar chart that shows the top words likely to appear in a spam
+email
+
+```{r}
+library(ggplot2)
+library(broom)
+library(dplyr)
+library(tidyverse)
+
+word_probs <- emails.df %>%
+  pivot_longer(cols = -label, names_to = "word", values_to = "tfidf") %>%
+  filter(tfidf > 0) %>%
+  group_by(word) %>%
+  summarise(
+    n_spam = sum(label == 1),
+    n_total = n(),
+    spam_likelihood = n_spam / n_total
+  ) %>%
+  arrange(-spam_likelihood)
+
+# Plot top spammy words
+top_spammy <- head(word_probs, 20)
+
+ggplot(top_spammy, aes(x = reorder(word, spam_likelihood), y = spam_likelihood)) +
+  geom_col(fill = "darkgreen") +
+  coord_flip() +
+  labs(title = "Likelihood Word Appears in Spam Emails",
+       x = "Word",
+       y = "Empirical Spam Probability")
+```
+
+\*means that x% of the time that word shows up, it will be consided spam
+
+```         
+```
+
+create a table with top spam words, their total number of appearances,
+spam appearances, not spam, and percentage that is spam
+
+```{r}
+
+library(dplyr)
+top_positive_names<- names(top_positive)
+# Create a data frame with counts
+word_counts <- lapply(top_positive_names, function(word) {
+  tfidf_vals <- emails.df[[word]]
+  n_total <- sum(tfidf_vals > 0)
+  n_spam <- sum(tfidf_vals > 0 & emails.df$label == 1)
+  n_not_spam <- sum(tfidf_vals > 0 & emails.df$label == 0)
+  
+  data.frame(
+    word = word,
+    total_appearances = n_total,
+    spam_appearances = n_spam,
+    not_spam_appearances = n_not_spam,
+    pct_spam = ifelse(n_total > 0, round(n_spam / n_total, 2), NA)
+  )
+})
+
+# Combine into one data frame
+word_counts_df <- do.call(rbind, word_counts)
+
+# View top
+print(word_counts_df[order(-word_counts_df$pct_spam), ])
+```
+
+```{r}
+print(word_counts_df)
+```
+
+Create a scatter plot to understand the relationship between the number
+of emails that the word appears in and the proportion of the appearances
+of the word in spam for the top spam words
+
+```{r}
+library(ggplot2)
+
+ggplot(word_counts_df, aes(x = total_appearances, y = pct_spam, label = word)) +
+  geom_point(color = "darkgreen", alpha = 0.7) +
+  geom_text(check_overlap = TRUE, vjust = -0.5, size = 3.5) +
+  labs(title = "Spam Likelihood vs Word Frequency",
+       x = "Number of Emails Word Appears In",
+       y = "Proportion of Those That Are Spam")
+```
+
+# XGBoost
+
+use a XGBoost model to create a predictive model of spam likelihood from
+word inputs
+
+```{r}
+install.packages(xgboost)
+# Load libraries
+library(xgboost)
+library(caret)
+library(dplyr)
+
+# Assume the last column is the spam label
+target_col <- names(emails.df)[ncol(emails.df)]
+
+# Split data
+set.seed(123)
+trainIndex <- createDataPartition(emails.df[[target_col]], p = 0.7, list = FALSE)
+train_data <- emails.df[trainIndex, ]
+test_data <- emails.df[-trainIndex, ]
+
+# Prepare matrix inputs (exclude the target column)
+train_matrix <- as.matrix(select(train_data, -all_of(target_col)))
+train_label <- train_data[[target_col]]
+test_matrix <- as.matrix(select(test_data, -all_of(target_col)))
+test_label <- test_data[[target_col]]
+
+# Set XGBoost parameters
+params <- list(
+  objective = "binary:logistic",
+  eval_metric = "error"
+)
+train_label <- as.numeric(as.character(train_data[[target_col]]))
+test_label <- as.numeric(as.character(test_data[[target_col]]))
+
+# Train XGBoost model
+xgb_model <- xgboost(
+  data = train_matrix,
+  label = train_label,
+  params = params,
+  nrounds = 100,
+  verbose = 0
+)
+
+# Make predictions
+pred_probs <- predict(xgb_model, test_matrix)
+pred_labels <- ifelse(pred_probs > 0.5, 1, 0)
+
+# Evaluate model
+confusionMatrix(as.factor(pred_labels), as.factor(test_label))
+```
+
+# Coefficient Training for Classification of "spamminess"
+
+```{r}
+# ==============
+# 1. Clean and get features
+# ==============
+
+# Suppose you already have lm.fit
+# (otherwise replace feature_coefs manually)
+
+coefs <- coef(lm.fit)  # Get all coefs
+feature_coefs <- coefs[-1]  # Remove intercept
+feature_coefs <- feature_coefs[!is.na(feature_coefs)]  # Drop NA coefs
+names(feature_coefs) <- tolower(names(feature_coefs))  # Lowercase feature names
+
+# Get top 150 positive and 150 negative words
+positive_words <- names(sort(feature_coefs, decreasing = TRUE))[1:250]
+negative_words <- names(sort(feature_coefs, decreasing = FALSE))[1:250]
+#mid_words <-  names(sort(feature_coefs, decreasing = FALSE))[200:350]
+cat("Loaded Positive and Negative Words.\n\n")
+```
+
+```{r}
+# ==============
+# 2. Text cleaning function: unigrams + bigrams
+# ==============
+
+clean_text_with_bigrams <- function(text) {
+  text <- tolower(text)
+  text <- gsub("[^a-z ]", "", text)  # <<< FIXED LINE (keep spaces!)
+  
+  words <- unlist(strsplit(text, "\\s+"))
+  words <- words[words != ""]
+  
+  unigrams <- words
+  
+  bigrams <- if (length(words) >= 2) {
+    paste(words[-length(words)], words[-1], sep = ".")
+  } else {
+    character(0)
+  }
+  
+  all_tokens <- c(unigrams, bigrams)
+  
+  return(all_tokens)
+}
+```
+
+```{r}
+# ==============
+# 3. Scoring function
+# ==============
+
+compound_score_from_text <- function(email_text, positive_words, negative_words) {
+  tokens <- clean_text_with_bigrams(email_text)
+  
+  pos_matches <- tokens[tokens %in% positive_words]
+  neg_matches <- tokens[tokens %in% negative_words]
+#  mid_matches <- tokens[tokens %in% mid_words]
+  
+  pos_count <- length(pos_matches)
+  neg_count <- length(neg_matches)
+#  mid_count <- length(mid_matches)
+  
+#  total_count <- length(email_text)  
+  total_count <- pos_count + neg_count
+  
+  if (total_count == 0) {
+    return(0.5)  # No matches, neutral spam score
+  }
+  
+  score <- pos_count / total_count
+  
+  return(score)
+}
+```
+
+Run a few test chunks of text for the model to see how it functions with
+the input
+
+```{r}
+# ==============
+# 4. Example Test Emails (DESIGNED to match your model's features)
+# ==============
+
+test_emails <- list(
+  "Software Sale" = "Click here to save big on your next adobe software purchase.",
+  "Account Alert" = "Your account information needs urgent update. Investment opportunity inside.",
+  "Urgent Offer" = "Get a special offer now! Buy and save within the next hour.",
+  "Statistical Guide" = "Thank you for using our stat.ethz guide for reproducible research.",
+  "Product Activation" = "Dear customer, your adobe product is ready. Click here for activation.",
+  "Team Update" = "Hi team, please find the project report attached. Let’s meet Monday.",
+  "Energy News" = "Breaking news: gas and energy prices are rising, market is reacting strongly.",
+  "Customer Support" = "Please contact our customer support if you have any questions about your account.",
+  "Random Story" = "Once upon a time, in a world far away, a company was born.",
+  "Mixed Signals" = "Save big now! Thank you for being a loyal customer. Offer ends soon!"
+)
+```
+
+```{r}
+# ==============
+# 5. Run the Scoring
+# ==============
+
+cat("------ SPAM SCORES ------\n\n")
+for (name in names(test_emails)) {
+  spam_score <- compound_score_from_text(test_emails[[name]], positive_words, negative_words)
+  cat(sprintf("%s -> Spam Score: %.2f%%\n", name, spam_score * 100))
+}
+```
+
+# **Making a Shiny App**
+
+Create an app that allows the user to input their email to test the
+input for spam likelihood and make adjustments against the recommended
+"spammy" words.
+
+```{r}
+positive_words <- names(sort(feature_coefs, decreasing = TRUE))[1:250]
+negative_words <- names(sort(feature_coefs, decreasing = FALSE))[1:250]
+```
+
+```{r}
+# Load libraries
+library(shiny)
+
+# ======= Load your model components beforehand =======
+
+
+# Cleaning function
+clean_text_with_bigrams <- function(text) {
+  text <- tolower(text)
+  text <- gsub("[^a-z ]", "", text)
+  words <- unlist(strsplit(text, "\\s+"))
+  words <- words[words != ""]
+  unigrams <- words
+  bigrams <- if (length(words) >= 2) paste(words[-length(words)], words[-1], sep = ".") else character(0)
+  all_tokens <- c(unigrams, bigrams)
+  return(all_tokens)
+}
+
+# Spam scoring function
+compound_score_and_matches <- function(email_text, positive_words, negative_words) {
+  tokens <- clean_text_with_bigrams(email_text)
+  pos_matches <- tokens[tokens %in% positive_words]
+  neg_matches <- tokens[tokens %in% negative_words]
+  pos_count <- length(pos_matches)
+  neg_count <- length(neg_matches)
+  total_count <- pos_count + neg_count
+  spam_score <- if (total_count == 0) 0.5 else pos_count / total_count
+  list(score = spam_score, spammy_words = pos_matches)
+}
+
+# ======= UI =======
+ui <- fluidPage(
+  # Use a green theme and add custom styles
+  tags$head(
+    tags$style(HTML("
+      body {
+        background-color: #e6f4ea;
+        font-family: 'Segoe UI', sans-serif;
+      }
+      .well {
+        background-color: #f0fdf4;
+        border: 1px solid #cce3d8;
+        padding: 20px;
+        border-radius: 10px;
+      }
+      h3, h4, h5 {
+        color: #2e7d32;
+        font-weight: bold;
+      }
+      .btn {
+        background-color: #66bb6a;
+        border-color: #4caf50;
+        color: white;
+        border-radius: 5px;
+      }
+      .btn:hover {
+        background-color: #4caf50;
+      }
+      textarea {
+        background-color: #ffffff;
+        border: 1px solid #a5d6a7;
+        border-radius: 5px;
+      }
+      #title {
+        color: #2e7d32;
+        font-size: 32px;
+        font-weight: bold;
+      }
+    "))
+  ),
+  
+  titlePanel(
+    div(id = "title", "🛡️ SPAM SHIELD")  # Adding a shield graphic (emoji) to the title
+  ),
+  
+  sidebarLayout(
+    sidebarPanel(
+      textAreaInput("email_input", "Enter your drafted email here:", "", width = "100%", height = "200px"),
+      actionButton("submit_btn", "Check Spam Likelihood", class = "btn"),
+      br(), br()
+    ),
+    
+    mainPanel(
+      h3("Results:"),
+      verbatimTextOutput("spam_result"),
+      conditionalPanel(
+        condition = "output.is_spam == true",
+        h4("⚠️ Warning: High spam probability!"),
+        h5("Consider removing these words:"),
+        verbatimTextOutput("spammy_words")
+      ),
+      conditionalPanel(
+        condition = "output.is_spam == false",
+        h4("✅ Good! Your email is at low risk of being identified as spam!")
+      )
+    )
+  )
+)
+
+# ======= Server =======
+server <- function(input, output, session) {
+  spam_check <- reactiveVal(NULL)
+  
+  observeEvent(input$submit_btn, {
+    req(input$email_input)  # Ensure non-empty input
+    
+    result <- compound_score_and_matches(input$email_input, positive_words, negative_words)
+    spam_check(result)
+  })
+  
+  output$spam_result <- renderText({
+    req(spam_check())
+    score <- spam_check()$score
+    paste0("Spam Probability: ", round(score * 100, 2), "%")
+  })
+  
+  output$is_spam <- reactive({
+    req(spam_check())
+    spam_check()$score > 0.5  # Determine if it's spam or not
+  })
+  outputOptions(output, "is_spam", suspendWhenHidden = FALSE)
+  
+  output$spammy_words <- renderText({
+    req(spam_check())
+    if (length(spam_check()$spammy_words) == 0) {
+      return("No obvious spammy words detected.")
+    } else {
+      paste(spam_check()$spammy_words, collapse = ", ")
+    }
+  })
+}
+
+# ======= Run the App =======
+shinyApp(ui = ui, server = server)
+```
